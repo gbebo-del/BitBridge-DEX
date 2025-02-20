@@ -104,3 +104,99 @@
         (ok pool)
     )
 )
+
+;; Read-only functions
+(define-read-only (get-pool-details (pool-id uint))
+    (match (map-get? liquidity-pools { pool-id: pool-id })
+        pool-data (ok pool-data)
+        (err ERR-POOL-NOT-FOUND))
+)
+
+(define-read-only (get-provider-shares (pool-id uint) (provider principal))
+    (default-to
+        { shares: u0 }
+        (map-get? liquidity-providers { pool-id: pool-id, provider: provider }))
+)
+
+(define-read-only (calculate-swap-output (pool-id uint) (input-amount uint) (is-x-to-y bool))
+    (match (map-get? liquidity-pools { pool-id: pool-id })
+        pool-data 
+            (let (
+                (input-reserve (if is-x-to-y (get reserve-x pool-data) (get reserve-y pool-data)))
+                (output-reserve (if is-x-to-y (get reserve-y pool-data) (get reserve-x pool-data)))
+                (fee-adjusted-input (mul-down input-amount (- PRECISION (get fee-rate pool-data))))
+            )
+            (asserts! (> input-reserve u0) (err ERR-ZERO-LIQUIDITY))
+            (asserts! (> output-reserve u0) (err ERR-ZERO-LIQUIDITY))
+            (ok (div-down
+                (mul-down fee-adjusted-input output-reserve)
+                (+ input-reserve fee-adjusted-input))))
+        (err ERR-POOL-NOT-FOUND))
+)
+
+;; Public functions
+(define-public (create-pool (token-x <ft-trait>) (token-y <ft-trait>) (fee-rate uint))
+    (let (
+        (pool-id (+ (var-get last-pool-id) u1))
+    )
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    (asserts! (< fee-rate PRECISION) ERR-INVALID-AMOUNT)
+    (asserts! (not (is-eq (contract-of token-x) (contract-of token-y))) ERR-INVALID-AMOUNT)
+    
+    (map-set liquidity-pools
+        { pool-id: pool-id }
+        {
+            token-x: (contract-of token-x),
+            token-y: (contract-of token-y),
+            total-shares: u0,
+            reserve-x: u0,
+            reserve-y: u0,
+            fee-rate: fee-rate,
+            last-block-height: block-height
+        }
+    )
+    (var-set last-pool-id pool-id)
+    (ok pool-id))
+)
+
+(define-public (add-liquidity (pool-id uint) (token-x <ft-trait>) (token-y <ft-trait>) (amount-x uint) (amount-y uint) (min-shares uint))
+    (let (
+        (pool (unwrap! (get-pool-details pool-id) ERR-POOL-NOT-FOUND))
+        (shares-to-mint (if (is-eq (get total-shares pool) u0)
+            amount-x  ;; Initial liquidity shares equal to first deposit
+            (min
+                (div-down (* amount-x (get total-shares pool)) (get reserve-x pool))
+                (div-down (* amount-y (get total-shares pool)) (get reserve-y pool))
+            )
+        ))
+    )
+    (asserts! (and 
+        (is-eq (contract-of token-x) (get token-x pool))
+        (is-eq (contract-of token-y) (get token-y pool))
+    ) ERR-NOT-AUTHORIZED)
+    (asserts! (>= shares-to-mint min-shares) ERR-SLIPPAGE-TOO-HIGH)
+    (asserts! (and (> amount-x u0) (> amount-y u0)) ERR-INVALID-AMOUNT)
+    
+    ;; Transfer tokens to pool
+    (try! (transfer-token token-x amount-x tx-sender (as-contract tx-sender)))
+    (try! (transfer-token token-y amount-y tx-sender (as-contract tx-sender)))
+    
+    ;; Update pool state
+    (map-set liquidity-pools
+        { pool-id: pool-id }
+        (merge pool {
+            total-shares: (+ (get total-shares pool) shares-to-mint),
+            reserve-x: (+ (get reserve-x pool) amount-x),
+            reserve-y: (+ (get reserve-y pool) amount-y),
+            last-block-height: block-height
+        })
+    )
+    
+    ;; Update provider shares
+    (map-set liquidity-providers
+        { pool-id: pool-id, provider: tx-sender }
+        { shares: (+ shares-to-mint (get shares (get-provider-shares pool-id tx-sender))) }
+    )
+    
+    (ok shares-to-mint))
+)
