@@ -50,7 +50,7 @@
         reserve-x: uint,
         reserve-y: uint,
         fee-rate: uint,
-        last-block-height: uint
+        last-stacks-block-height: uint
     }
 )
 
@@ -95,7 +95,7 @@
     reserve-x: uint,
     reserve-y: uint,
     fee-rate: uint,
-    last-block-height: uint 
+    last-stacks-block-height: uint 
 }))
     (begin
         (asserts! (> (get total-shares pool) u0) ERR-ZERO-LIQUIDITY)
@@ -153,7 +153,7 @@
             reserve-x: u0,
             reserve-y: u0,
             fee-rate: fee-rate,
-            last-block-height: block-height
+            last-stacks-block-height: stacks-block-height
         }
     )
     (var-set last-pool-id pool-id)
@@ -189,7 +189,7 @@
             total-shares: (+ (get total-shares pool) shares-to-mint),
             reserve-x: (+ (get reserve-x pool) amount-x),
             reserve-y: (+ (get reserve-y pool) amount-y),
-            last-block-height: block-height
+            last-stacks-block-height: stacks-block-height
         })
     )
     
@@ -228,7 +228,7 @@
         (merge pool {
             reserve-x: (+ (get reserve-x pool) amount-in),
             reserve-y: (- (get reserve-y pool) output-amount),
-            last-block-height: block-height
+            last-stacks-block-height: stacks-block-height
         })
     )
     
@@ -262,7 +262,7 @@
             total-shares: (- (get total-shares validated-pool) shares),
             reserve-x: (- (get reserve-x validated-pool) amount-x),
             reserve-y: (- (get reserve-y validated-pool) amount-y),
-            last-block-height: block-height
+            last-stacks-block-height: stacks-block-height
         })
     )
     
@@ -280,18 +280,18 @@
     (let (
         (pool (unwrap! (get-pool-details pool-id) ERR-POOL-NOT-FOUND))
         (validated-pool (unwrap! (validate-pool-state pool) ERR-ZERO-LIQUIDITY))
-        (current-block block-height)
+        (current-block stacks-block-height)
     )
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
     (asserts! (< new-fee-rate PRECISION) ERR-INVALID-AMOUNT)
-    (asserts! (is-eq (get last-block-height validated-pool) 
+    (asserts! (is-eq (get last-stacks-block-height validated-pool) 
                      (- current-block u1)) ERR-CONCURRENT-UPDATE)
     
     (map-set liquidity-pools
         { pool-id: pool-id }
         (merge validated-pool {
             fee-rate: new-fee-rate,
-            last-block-height: current-block
+            last-stacks-block-height: current-block
         })
     )
     (ok true))
